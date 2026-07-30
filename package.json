@@ -1,0 +1,36 @@
+{
+  "name": "fattureincloud-mcp",
+  "version": "0.3.0",
+  "description": "MCP server for the Fatture in Cloud API v2 — CRUD on issued documents and expenses",
+  "type": "module",
+  "bin": {
+    "fattureincloud-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node scripts/smoke-test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.8.0",
+    "globals": "^17.8.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.65.0"
+  }
+}

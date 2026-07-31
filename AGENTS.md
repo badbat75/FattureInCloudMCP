@@ -1,6 +1,6 @@
 # FattureInCloudMCP
 
-MCP server (stdio transport, official TypeScript SDK) bridging the
+MCP server (stdio and Streamable HTTP transports, official TypeScript SDK) bridging the
 [Fatture in Cloud API v2](https://developers.fattureincloud.it/api-reference/).
 Exposes CRUD on issued documents (invoices, credit notes, self invoices...) and
 received documents (expenses...), plus config lookups. See `docs/api.md` for the implemented surface.
@@ -12,18 +12,23 @@ received documents (expenses...), plus config lookups. See `docs/api.md` for the
 - `npm run lint` — ESLint (flat config, typescript-eslint)
 - `npm run smoke` — read-only end-to-end test against the real API (needs `dist/` built and credentials, see below); safe to run anytime
 - `node scripts/crud-test.mjs` — full CRUD roundtrip on the REAL account (creates, updates and deletes a test expense; leaves no trace but run deliberately)
+- `npm run start:http` — run the Streamable HTTP entrypoint locally (`HOST`/`PORT`, defaults `127.0.0.1:3010`)
+- `./scripts/deploy.ps1` — build and install the HTTP entrypoint as a systemd service on a remote host, see `docs/deploy.md`
 
 ## Architecture
 
-- `src/index.ts` — MCP server: one `registerTool` per action, all with `readOnlyHint: true`. Shared zod schemas for pagination/sort/filter params.
-- `src/fic.ts` — thin API client: `ficGet(path, params)` (Bearer auth, error mapping), `resolveCompanyId`, `trimListResponse` (strips `*_url` pagination noise before returning lists to the model).
+- `src/server.ts` — `buildServer()`: one `registerTool` per action, plus the shared zod schemas for pagination/sort/filter params. A factory, not a singleton, because the HTTP entrypoint builds one instance per request.
+- `src/index.ts` — stdio entrypoint (the `bin`): builds a server and connects `StdioServerTransport`.
+- `src/http.ts` — Streamable HTTP entrypoint: stateless, one server + transport per request, credentials taken from the request headers.
+- `src/fic.ts` — thin API client: `ficGet(path, params)` (Bearer auth, error mapping), `resolveCompanyId`, `trimListResponse` (strips `*_url` pagination noise before returning lists to the model), and the `credentials` `AsyncLocalStorage` holding the current request's token/company.
 
-To add an endpoint: one `registerTool` in `src/index.ts` calling `ficGet`, then document it in `docs/api.md`. Full OpenAPI spec: [fattureincloud/openapi-fattureincloud](https://github.com/fattureincloud/openapi-fattureincloud).
+To add an endpoint: one `registerTool` in `src/server.ts` calling `ficGet`, then document it in `docs/api.md`. Full OpenAPI spec: [fattureincloud/openapi-fattureincloud](https://github.com/fattureincloud/openapi-fattureincloud).
 
 ## Configuration and secrets
 
-- `FIC_ACCESS_TOKEN` (required) — manual access token (never expires). `FIC_COMPANY_ID` (optional) — default company.
-- Real credentials live in the **gitignored** `.mcp.json` in the repo root (and originally in `C:\Users\emili\git\GestioneAutofatturazione\.env`). Never commit them; never print the token in output.
+- stdio: `FIC_ACCESS_TOKEN` (required) — manual access token (never expires). `FIC_COMPANY_ID` (optional) — default company.
+- HTTP: the same two values arrive per request as the `X-FIC-Token` and `X-FIC-Company` headers, and take precedence over the env vars. A remote deployment therefore stores no credential of its own; see `docs/deploy.md`.
+- Real credentials live in the **gitignored** `.mcp.json` in the repo root. Never commit them; never print the token in output.
 
 ## Fatture in Cloud API quirks (learned the hard way)
 

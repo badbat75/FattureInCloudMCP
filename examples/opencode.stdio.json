@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "fattureincloud": {
+      "type": "local",
+      "command": ["node", "<path-to-repo>/dist/index.js"],
+      "enabled": true,
+      "environment": {
+        "FIC_ACCESS_TOKEN": "{env:FIC_ACCESS_TOKEN}",
+        "FIC_COMPANY_ID": "{env:FIC_COMPANY_ID}"
+      }
+    }
+  }
+}

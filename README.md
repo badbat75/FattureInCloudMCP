@@ -43,12 +43,14 @@ The server needs two environment variables:
 - `FIC_ACCESS_TOKEN` (required) — a [manual access token](https://developers.fattureincloud.it/docs/authentication/manual-authentication/): generate it from the Fatture in Cloud developer area selecting the read scopes for issued and received documents. Manual tokens never expire (revocable from the same page).
 - `FIC_COMPANY_ID` (optional) — default company ID; if unset, tools require an explicit `company_id` argument (discover it with `list_companies`).
 
+Configuration templates for Claude Code and opencode, local stdio and remote HTTP, are in [examples/](examples/).
+
 ### Claude Code
 
 A project-scoped `.mcp.json` (gitignored, contains the token) is already set up. From any other directory:
 
 ```sh
-claude mcp add --scope user fattureincloud -e FIC_ACCESS_TOKEN=<token> -e FIC_COMPANY_ID=<id> -- node C:\Users\emili\git\FattureInCloudMCP\dist\index.js
+claude mcp add --scope user fattureincloud -e FIC_ACCESS_TOKEN=<token> -e FIC_COMPANY_ID=<id> -- node <repo>\dist\index.js
 ```
 
 ### Claude Desktop
@@ -60,7 +62,7 @@ Add to `claude_desktop_config.json`:
   "mcpServers": {
     "fattureincloud": {
       "command": "node",
-      "args": ["C:\\Users\\emili\\git\\FattureInCloudMCP\\dist\\index.js"],
+      "args": ["<repo>\\dist\\index.js"],
       "env": {
         "FIC_ACCESS_TOKEN": "<token>",
         "FIC_COMPANY_ID": "<id>"
@@ -70,6 +72,10 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
+### Remote (Streamable HTTP)
+
+`dist/http.js` serves the same tools over HTTP and takes the credentials from the `X-FIC-Token` and `X-FIC-Company` request headers instead of the environment, so the host running it stores no secret. `./scripts/deploy.ps1` installs it as a systemd service on a remote machine — see [docs/deploy.md](docs/deploy.md).
+
 ## Extending
 
-The API surface is small on purpose. To add endpoints (clients, suppliers, products, receipts, taxes, cashbook...), follow the pattern in `src/index.ts`: one `registerTool` per action calling `ficGet` from `src/fic.ts`. The full OpenAPI spec lives at [fattureincloud/openapi-fattureincloud](https://github.com/fattureincloud/openapi-fattureincloud).
+The API surface is small on purpose. To add endpoints (clients, suppliers, products, receipts, taxes, cashbook...), follow the pattern in `src/server.ts`: one `registerTool` per action calling `ficGet` from `src/fic.ts`. The full OpenAPI spec lives at [fattureincloud/openapi-fattureincloud](https://github.com/fattureincloud/openapi-fattureincloud).

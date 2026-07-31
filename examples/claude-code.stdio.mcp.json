@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "fattureincloud": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["<path-to-repo>/dist/index.js"],
+      "env": {
+        "FIC_ACCESS_TOKEN": "${FIC_ACCESS_TOKEN}",
+        "FIC_COMPANY_ID": "${FIC_COMPANY_ID}"
+      }
+    }
+  }
+}

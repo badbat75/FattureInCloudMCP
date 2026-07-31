@@ -1,25 +1,43 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 const BASE_URL = "https://api-v2.fattureincloud.it";
 
 export type QueryParams = Record<string, string | number | undefined>;
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
+/** Credentials scoped to the request being served. */
+export type FicCredentials = { token?: string; companyId?: number };
+
+/**
+ * Per-request credentials. The HTTP entrypoint fills this from the client's
+ * headers, so the deployment holds no Fatture in Cloud secret of its own; under
+ * stdio the store is empty and the FIC_* env vars are used instead.
+ */
+export const credentials = new AsyncLocalStorage<FicCredentials>();
+
+/** The access token for the current request: client-provided first, env second. */
+function resolveToken(): string {
+  const token = credentials.getStore()?.token ?? process.env.FIC_ACCESS_TOKEN;
+  if (!token) {
+    throw new Error(
+      "No Fatture in Cloud access token available: set FIC_ACCESS_TOKEN (stdio) or send the " +
+        "X-FIC-Token header (HTTP). Generate a manual access token from the Fatture in Cloud " +
+        "developer area (https://developers.fattureincloud.it/docs/authentication/manual-authentication/)."
+    );
+  }
+  return token;
+}
+
 /**
  * Perform an authenticated request against the Fatture in Cloud API v2.
- * Auth uses a manual access token (never expires) from the FIC_ACCESS_TOKEN env var.
+ * Auth uses a manual access token (never expires), see resolveToken.
  */
 export async function ficRequest(
   method: HttpMethod,
   path: string,
   opts: { params?: QueryParams; body?: unknown } = {}
 ): Promise<any> {
-  const token = process.env.FIC_ACCESS_TOKEN;
-  if (!token) {
-    throw new Error(
-      "FIC_ACCESS_TOKEN is not set. Generate a manual access token from the Fatture in Cloud " +
-        "developer area (https://developers.fattureincloud.it/docs/authentication/manual-authentication/) " +
-        "and set it in the MCP server environment."
-    );
-  }
+  const token = resolveToken();
 
   const url = new URL(BASE_URL + path);
   for (const [key, value] of Object.entries(opts.params ?? {})) {
@@ -93,10 +111,7 @@ export async function ficUploadAttachment(
   fileBytes: Uint8Array,
   fileName: string
 ): Promise<any> {
-  const token = process.env.FIC_ACCESS_TOKEN;
-  if (!token) {
-    throw new Error("FIC_ACCESS_TOKEN is not set.");
-  }
+  const token = resolveToken();
 
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
   const blob = new Blob([fileBytes as BlobPart], {
@@ -124,14 +139,16 @@ export async function ficUploadAttachment(
   return raw ? JSON.parse(raw) : {};
 }
 
-/** Resolve the company ID from the tool argument or the FIC_COMPANY_ID env var. */
+/** Resolve the company ID: tool argument first, then request credentials, then env. */
 export function resolveCompanyId(explicit?: number): number {
   if (explicit !== undefined) return explicit;
+  const fromRequest = credentials.getStore()?.companyId;
+  if (fromRequest !== undefined && Number.isInteger(fromRequest) && fromRequest > 0) return fromRequest;
   const fromEnv = Number(process.env.FIC_COMPANY_ID);
   if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv;
   throw new Error(
-    "No company_id available: pass the company_id argument or set the FIC_COMPANY_ID env var. " +
-      "Use the list_companies tool to discover the ID."
+    "No company_id available: pass the company_id argument, send the X-FIC-Company header (HTTP) " +
+      "or set the FIC_COMPANY_ID env var. Use the list_companies tool to discover the ID."
   );
 }
 

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "fattureincloud": {
+      "type": "http",
+      "url": "https://host.example/fic/",
+      "headers": {
+        "Authorization": "Bearer ${MCP_GATEWAY_TOKEN}",
+        "X-FIC-Token": "${FIC_ACCESS_TOKEN}",
+        "X-FIC-Company": "${FIC_COMPANY_ID}"
+      }
+    }
+  }
+}

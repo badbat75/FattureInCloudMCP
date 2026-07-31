@@ -39,7 +39,7 @@ Update/delete tools carry `destructiveHint: true`; deletes are irreversible.
 No parameters. Returns a trimmed array of the companies accessible with the token:
 
 ```json
-[{ "id": 1540485, "name": "...", "type": "company" }]
+[{ "id": 12345, "name": "...", "type": "company" }]
 ```
 
 The `id` is the `company_id` accepted by all other tools.

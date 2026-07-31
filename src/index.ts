@@ -17,6 +17,7 @@ List tools accept the Fatture in Cloud filter language in the "q" parameter. Exa
   q: "entity.name like '%acme%'"
   q: "amount_gross > 1000"
 Supported operators: =, !=, >, <, >=, <=, like, is null, is not null, combined with and/or and parentheses.
+Always write comparison operators as literal characters — HTML entities (&gt;, &lt;) are passed through unchanged and rejected with 422 "Invalid query syntax".
 Dates are ISO strings (YYYY-MM-DD); amounts are in the document currency (EUR unless specified).
 Lists are paginated: check current_page/last_page/total and fetch further pages if needed.
 
@@ -55,7 +56,9 @@ const qSchema = z
   .string()
   .optional()
   .describe(
-    "Filter query, e.g. \"date >= '2026-01-01' and date <= '2026-06-30'\" or \"entity.name like '%acme%'\"."
+    "Filter query, e.g. \"date >= '2026-01-01' and date <= '2026-06-30'\" or \"entity.name like '%acme%'\". " +
+      "Write the operators literally (>, <, >=, <=): the string is sent verbatim, so HTML entities " +
+      "like &gt; or &lt; reach the API and are rejected with 422 \"Invalid query syntax\"."
   );
 const fieldsetSchema = z
   .enum(["basic", "detailed"])

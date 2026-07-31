@@ -1,6 +1,6 @@
 # Implemented API surface
 
-MCP tools exposed by this server and the [Fatture in Cloud API v2](https://developers.fattureincloud.it/api-reference/) endpoints they wrap. Every request is authenticated with `Authorization: Bearer $FIC_ACCESS_TOKEN` against `https://api-v2.fattureincloud.it`.
+MCP tools exposed by this server and the [Fatture in Cloud API v2](https://developers.fattureincloud.it/api-reference/) endpoints they wrap. Every request is authenticated against `https://api-v2.fattureincloud.it` with `Authorization: Bearer <token>`, where the token comes from the `FIC_ACCESS_TOKEN` env var under stdio or from the `X-FIC-Token` request header over HTTP (see [deploy.md](deploy.md)).
 
 ## Overview
 
@@ -30,7 +30,7 @@ MCP tools exposed by this server and the [Fatture in Cloud API v2](https://devel
 
 Update/delete tools carry `destructiveHint: true`; deletes are irreversible.
 
-`company_id` can be omitted on every tool: the server falls back to the `FIC_COMPANY_ID` env var and errors with a hint to call `list_companies` if neither is available.
+`company_id` can be omitted on every tool: the server falls back to the session default — the `FIC_COMPANY_ID` env var under stdio, the `X-FIC-Company` header over HTTP — and errors with a hint to call `list_companies` if neither is available.
 
 ## Tools
 
@@ -48,7 +48,7 @@ The `id` is the `company_id` accepted by all other tools.
 
 | Param | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `company_id` | int | `FIC_COMPANY_ID` | |
+| `company_id` | int | session default | |
 | `type` | enum | `invoice` | One per call: `invoice`, `quote`, `proforma`, `receipt`, `delivery_note`, `credit_note`, `order`, `work_report`, `supplier_order`, `self_own_invoice`, `self_supplier_invoice` |
 | `page` | int ≥ 1 | 1 | |
 | `per_page` | int 5–100 | 50 | **API rejects values below 5** (spec claims min 1 — wrong) |
@@ -97,7 +97,7 @@ Same shape with the received-document fields: `type` (default `expense`), `descr
 
 Flow (verified live on expenses):
 
-1. `upload_attachment` — `company_id?`, `target` (`issued` | `received`), `file_path` (local absolute path; PDF, images, XML, p7m, zip...), `filename?`. Sends `multipart/form-data` and returns `{ attachment_token }`. Unbound tokens expire, so upload right before the next step.
+1. `upload_attachment` — `company_id?`, `target` (`issued` | `received`), `file_path` (absolute path **on the machine running the server**, not on the client: over HTTP that is the remote host's disk; PDF, images, XML, p7m, zip...), `filename?`. Sends `multipart/form-data` and returns `{ attachment_token }`. Unbound tokens expire, so upload right before the next step.
 2. Pass the token as `data.attachment_token` in `create_*` or `update_*` — passing a new token on update replaces the current attachment.
 3. The document detail then exposes `attachment_url`.
 
@@ -128,4 +128,4 @@ API failures surface as MCP tool errors with the HTTP status, path, FIC error de
 
 ## Not yet implemented
 
-Everything else in the [OpenAPI spec](https://github.com/fattureincloud/openapi-fattureincloud): clients/suppliers CRUD, products, receipts (corrispettivi), taxes, cashbook, archive, e-invoice XML/SDI send endpoints, issued/received document totals, attachments.
+Everything else in the [OpenAPI spec](https://github.com/fattureincloud/openapi-fattureincloud): clients/suppliers CRUD, products, receipts (corrispettivi), taxes, cashbook, archive, e-invoice XML/SDI send endpoints, issued/received document totals.

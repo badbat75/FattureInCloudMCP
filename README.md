@@ -3,6 +3,8 @@
 MCP (Model Context Protocol) server for the [Fatture in Cloud API v2](https://developers.fattureincloud.it/api-reference/).
 Lets Claude (Code / Desktop / any MCP client) read and manage (CRUD) issued documents (invoices, credit notes, quotes...) and received documents (expenses, passive credit notes...).
 
+Two transports over the same tools: **stdio** as a local child process, and **Streamable HTTP** for a shared deployment that keeps no credentials of its own.
+
 ## Tools
 
 | Tool | Description |
@@ -38,16 +40,18 @@ npm run build
 
 ### Authentication
 
-The server needs two environment variables:
+Two values, wherever they come from:
 
 - `FIC_ACCESS_TOKEN` (required) — a [manual access token](https://developers.fattureincloud.it/docs/authentication/manual-authentication/): generate it from the Fatture in Cloud developer area selecting the read scopes for issued and received documents. Manual tokens never expire (revocable from the same page).
 - `FIC_COMPANY_ID` (optional) — default company ID; if unset, tools require an explicit `company_id` argument (discover it with `list_companies`).
+
+Over stdio they are environment variables of the server process. Over HTTP they are the `X-FIC-Token` and `X-FIC-Company` headers of each request, so the deployed instance stores neither.
 
 Configuration templates for Claude Code and opencode, local stdio and remote HTTP, are in [examples/](examples/).
 
 ### Claude Code
 
-A project-scoped `.mcp.json` (gitignored, contains the token) is already set up. From any other directory:
+A project-scoped `.mcp.json` (gitignored) holds the credentials. From any other directory:
 
 ```sh
 claude mcp add --scope user fattureincloud -e FIC_ACCESS_TOKEN=<token> -e FIC_COMPANY_ID=<id> -- node <repo>\dist\index.js

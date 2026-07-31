@@ -29,6 +29,7 @@ To add an endpoint: one `registerTool` in `src/server.ts` calling `ficGet`, then
 - stdio: `FIC_ACCESS_TOKEN` (required) — manual access token (never expires). `FIC_COMPANY_ID` (optional) — default company.
 - HTTP: the same two values arrive per request as the `X-FIC-Token` and `X-FIC-Company` headers, and take precedence over the env vars. A remote deployment therefore stores no credential of its own; see `docs/deploy.md`.
 - Real credentials live in the **gitignored** `.mcp.json` in the repo root. Never commit them; never print the token in output.
+- `examples/` holds client config templates (Claude Code and opencode, stdio and HTTP) with the credentials left as environment placeholders — keep them free of real values and of any host-specific detail.
 
 ## Fatture in Cloud API quirks (learned the hard way)
 

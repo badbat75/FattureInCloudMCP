@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "fattureincloud": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://host.example/fic/",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-FIC-Token:${FIC_TOKEN}",
+        "--header",
+        "X-FIC-Company:${FIC_COMPANY}",
+        "--transport",
+        "http-only"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <gateway-token>",
+        "FIC_TOKEN": "<fic-token>",
+        "FIC_COMPANY": "<company-id>"
+      }
+    }
+  }
+}

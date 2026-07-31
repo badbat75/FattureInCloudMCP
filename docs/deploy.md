@@ -87,8 +87,10 @@ is enabled.
 
 ## Client configuration
 
-Ready-made templates for Claude Code and opencode, in both transports, live in
-[../examples](../examples). By hand:
+Ready-made templates for Claude Code, Claude Desktop and opencode, in both
+transports, live in [../examples](../examples). Note that Claude Desktop cannot send
+custom headers on its own and needs the `mcp-remote` bridge to reach this endpoint.
+By hand:
 
 ```powershell
 claude mcp add --transport http fattureincloud https://host.example/fic/ -s user `

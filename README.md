@@ -47,7 +47,7 @@ Two values, wherever they come from:
 
 Over stdio they are environment variables of the server process. Over HTTP they are the `X-FIC-Token` and `X-FIC-Company` headers of each request, so the deployed instance stores neither.
 
-Configuration templates for Claude Code and opencode, local stdio and remote HTTP, are in [examples/](examples/).
+Configuration templates for Claude Code, Claude Desktop and opencode, local stdio and remote HTTP, are in [examples/](examples/).
 
 ### Claude Code
 

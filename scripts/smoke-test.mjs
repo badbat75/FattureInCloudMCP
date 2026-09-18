@@ -9,7 +9,10 @@ import { fileURLToPath } from "node:url";
 const env = { ...process.env };
 if (!env.FIC_ACCESS_TOKEN) {
   const mcpConfig = JSON.parse(readFileSync(new URL("../.mcp.json", import.meta.url), "utf8"));
-  Object.assign(env, mcpConfig.mcpServers?.fattureincloud?.env ?? {});
+  const server = mcpConfig.mcpServers?.fattureincloud ?? {};
+  Object.assign(env, server.env ?? {});
+  if (server.headers?.["X-FIC-Token"]) env.FIC_ACCESS_TOKEN = server.headers["X-FIC-Token"];
+  if (server.headers?.["X-FIC-Company"]) env.FIC_COMPANY_ID = server.headers["X-FIC-Company"];
 }
 
 const serverPath = fileURLToPath(new URL("../dist/index.js", import.meta.url));
@@ -71,13 +74,26 @@ console.log("tools:", tools.result.tools.map((t) => t.name).join(", "));
 
 report("list_companies", await request("tools/call", { name: "list_companies", arguments: {} }));
 
-report(
+const selfInvoicesText = report(
   "list_issued_documents",
   await request("tools/call", {
     name: "list_issued_documents",
-    arguments: { type: "self_supplier_invoice", per_page: 5, sort: "-date" },
+    arguments: { type: "self_supplier_invoice", per_page: 5, sort: "-date", fieldset: "detailed" },
   })
 );
+
+const firstEInvoice = JSON.parse(selfInvoicesText || "{}").data?.find((d) => d.e_invoice);
+if (firstEInvoice) {
+  report(
+    "get_e_invoice_xml",
+    await request("tools/call", {
+      name: "get_e_invoice_xml",
+      arguments: { document_id: firstEInvoice.id },
+    })
+  );
+} else {
+  console.log("skip get_e_invoice_xml: no e_invoice document in the sample");
+}
 
 const expensesText = report(
   "list_received_documents",

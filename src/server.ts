@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { ficGet, ficRequest, ficUploadAttachment, resolveCompanyId, trimListResponse } from "./fic.js";
 
-const INSTRUCTIONS = `Bridge to the Fatture in Cloud API v2 (Italian invoicing platform). Read and write (CRUD) on issued documents (invoices, credit notes...) and received documents (expenses...).
+const INSTRUCTIONS = `Bridge to the Fatture in Cloud API v2 (Italian invoicing platform). Read and write (CRUD) on issued documents (invoices, credit notes...) and received documents (expenses...), plus config lookups and the e-invoice (SDI) XML download via get_e_invoice_xml.
 
 If a default company is configured (FIC_COMPANY_ID env var under stdio, X-FIC-Company header over HTTP), tools use it automatically; otherwise call list_companies first to discover the company_id.
 List tools accept the Fatture in Cloud filter language in the "q" parameter. Examples:
@@ -172,7 +172,7 @@ function jsonResult(data: unknown) {
  */
 export function buildServer(): McpServer {
   const server = new McpServer(
-    { name: "fattureincloud", version: "0.3.0" },
+    { name: "fattureincloud", version: "0.4.0" },
     { instructions: INSTRUCTIONS }
   );
 
@@ -272,6 +272,35 @@ export function buildServer(): McpServer {
       const cid = resolveCompanyId(company_id);
       const body = await ficGet(`/c/${cid}/issued_documents/${document_id}`, { fieldset });
       return jsonResult(body?.data ?? body);
+    }
+  );
+
+  server.registerTool(
+    "get_e_invoice_xml",
+    {
+      title: "Download e-invoice XML (SDI)",
+      description:
+        "Download the e-invoice (fattura elettronica SDI) XML for an issued document. " +
+        "Only available when the document has an e-invoice in Fatture in Cloud (e_invoice documents, " +
+        "e.g. self invoices); returns the raw XML text as-is.",
+      inputSchema: {
+        company_id: companyIdSchema,
+        document_id: documentIdSchema,
+        include_attachment: z
+          .boolean()
+          .optional()
+          .describe("Include the document attachment inside the XML e-invoice."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ company_id, document_id, include_attachment }) => {
+      const cid = resolveCompanyId(company_id);
+      const xml = await ficRequest("GET", `/c/${cid}/issued_documents/${document_id}/e_invoice/xml`, {
+        params: { include_attachment },
+        accept: "text/xml",
+        raw: true,
+      });
+      return { content: [{ type: "text" as const, text: xml }] };
     }
   );
 

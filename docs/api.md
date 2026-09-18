@@ -14,6 +14,7 @@ MCP tools exposed by this server and the [Fatture in Cloud API v2](https://devel
 | `get_issued_document` | `GET /c/{company_id}/issued_documents/{document_id}` | same as above |
 | `list_received_documents` | `GET /c/{company_id}/received_documents` | `received_documents:r` |
 | `get_received_document` | `GET /c/{company_id}/received_documents/{document_id}` | `received_documents:r` |
+| `get_e_invoice_xml` | `GET /c/{company_id}/issued_documents/{document_id}/e_invoice/xml` | `issued_documents.<type>:r` |
 
 ### Write tools
 
@@ -67,6 +68,10 @@ Same parameters as `list_issued_documents`, but `type` is one of `expense` (defa
 ### `get_received_document`
 
 `company_id?`, `document_id` (required), `fieldset` (default `detailed`). Returns the full document including `category`, `tax_deductibility`, `vat_deductibility`, `currency`, `payments_list`.
+
+### `get_e_invoice_xml`
+
+`company_id?`, `document_id` (required), `include_attachment?` (bool, embeds the document attachment in the XML). Returns the raw e-invoice (SDI) XML as text. Only works on documents that have an e-invoice in Fatture in Cloud (e.g. self invoices, or any document generated with `e_invoice`); for regular invoices the XML is only produced once the e-invoice is sent to SDI. Note: the public document URLs embed a JWT that only allows the PDF format — this endpoint is the API way to get the XML.
 
 ### `get_company_info`
 
@@ -128,4 +133,4 @@ API failures surface as MCP tool errors with the HTTP status, path, FIC error de
 
 ## Not yet implemented
 
-Everything else in the [OpenAPI spec](https://github.com/fattureincloud/openapi-fattureincloud): clients/suppliers CRUD, products, receipts (corrispettivi), taxes, cashbook, archive, e-invoice XML/SDI send endpoints, issued/received document totals.
+Everything else in the [OpenAPI spec](https://github.com/fattureincloud/openapi-fattureincloud): clients/suppliers CRUD, products, receipts (corrispettivi), taxes, cashbook, archive, e-invoice SDI send / rejection-reason endpoints, issued/received document totals.

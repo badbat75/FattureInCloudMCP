@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 const BASE_URL = "https://api-v2.fattureincloud.it";
 
-export type QueryParams = Record<string, string | number | undefined>;
+export type QueryParams = Record<string, string | number | boolean | undefined>;
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 /** Credentials scoped to the request being served. */
@@ -35,7 +35,7 @@ function resolveToken(): string {
 export async function ficRequest(
   method: HttpMethod,
   path: string,
-  opts: { params?: QueryParams; body?: unknown } = {}
+  opts: { params?: QueryParams; body?: unknown; accept?: string; raw?: boolean } = {}
 ): Promise<any> {
   const token = resolveToken();
 
@@ -50,7 +50,7 @@ export async function ficRequest(
     method,
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: "application/json",
+      Accept: opts.accept ?? "application/json",
       ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -83,7 +83,7 @@ export async function ficRequest(
     throw new Error(`Fatture in Cloud API ${res.status} on ${method} ${path}${hint}: ${detail}`);
   }
 
-  return raw ? JSON.parse(raw) : {};
+  return opts.raw ? raw : raw ? JSON.parse(raw) : {};
 }
 
 export const ficGet = (path: string, params: QueryParams = {}) =>

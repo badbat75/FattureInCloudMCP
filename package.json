@@ -1,6 +1,6 @@
 {
   "name": "fattureincloud-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server for the Fatture in Cloud API v2 — CRUD on issued documents and expenses",
   "type": "module",
   "bin": {

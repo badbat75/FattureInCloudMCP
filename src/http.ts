@@ -38,7 +38,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   // A server and transport per request: stateless, so concurrent callers never
   // share credentials and request ids cannot collide across clients.
-  const server = buildServer();
+  const server = buildServer({ allowFilePath: false });
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

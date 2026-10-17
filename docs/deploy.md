@@ -120,10 +120,10 @@ requires one.
 
 ## Attachments from remote clients
 
-`upload_attachment`'s `file_path` is read from the filesystem **where the server
-runs**. Over HTTP that is the remote host, so a path from the client machine does not
-exist there (the hardened unit's `ProtectHome=true` even turns `/home/...` into
-`EACCES`, which looks like a permission problem but is not). Remote clients pass the
+`upload_attachment`'s `file_path` would be read from the filesystem **where the
+server runs**, so the HTTP entrypoint disables it (`buildServer({ allowFilePath: false })`):
+a client path does not exist on the host, and honoring server paths would let any
+caller copy host files into their FIC account. Remote clients pass the
 file as `url` instead, an https link the server downloads, or as `content_base64` for
 small files; see `docs/api.md`.
 

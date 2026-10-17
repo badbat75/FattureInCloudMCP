@@ -177,7 +177,12 @@ function jsonResult(data: unknown) {
  * A fresh instance per HTTP request keeps concurrent clients (each with their own
  * credentials) from sharing state; the stdio entrypoint just builds one and keeps it.
  */
-export function buildServer(): McpServer {
+/**
+ * allowFilePath: whether upload_attachment may read the server's own disk. The
+ * HTTP entrypoint turns it off: a remote caller's path is meaningless there, and
+ * honoring it would let any caller copy server files into their FIC account.
+ */
+export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean } = {}): McpServer {
   const server = new McpServer(
     { name: "fattureincloud", version: "0.4.0" },
     { instructions: INSTRUCTIONS }
@@ -536,7 +541,7 @@ export function buildServer(): McpServer {
           .optional()
           .describe(
             "Absolute path on the filesystem of the machine running this MCP server, NOT the client's. Only works " +
-              "when the server runs locally (stdio); from a remote client use url or content_base64."
+              "when the server runs locally (stdio); it is disabled over HTTP, where you use url or content_base64."
           ),
         filename: z
           .string()
@@ -554,6 +559,12 @@ export function buildServer(): McpServer {
         throw new Error(
           `upload_attachment needs exactly one of url, content_base64, file_path (got ${given.length}). ` +
             "From a remote client use url (preferred) or content_base64."
+        );
+      }
+      if (file_path && !allowFilePath) {
+        throw new Error(
+          "file_path is disabled on this server: it runs remotely (HTTP transport), so the path would be resolved " +
+            "on the server's disk, not on yours. Pass the file as url (preferred) or content_base64 instead."
         );
       }
       if (content_base64 && !filename) {

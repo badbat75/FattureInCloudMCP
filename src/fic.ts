@@ -103,19 +103,28 @@ const MIME_BY_EXT: Record<string, string> = {
 
 /**
  * Upload a file as a document attachment (multipart/form-data).
+ * The MIME type comes from the extension, else from contentType (and a missing
+ * extension is then appended, so the stored file opens with the right app).
  * Returns the FIC response containing the attachment_token to set on the document.
  */
 export async function ficUploadAttachment(
   resource: "issued_documents" | "received_documents",
   companyId: number,
   fileBytes: Uint8Array,
-  fileName: string
+  fileName: string,
+  contentType?: string
 ): Promise<any> {
   const token = resolveToken();
 
-  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  const ext = fileName.includes(".") ? fileName.split(".").pop()!.toLowerCase() : "";
+  let mime = MIME_BY_EXT[ext];
+  if (!mime && contentType) {
+    mime = contentType.toLowerCase();
+    const knownExt = Object.keys(MIME_BY_EXT).find((key) => MIME_BY_EXT[key] === mime);
+    if (knownExt && !ext) fileName = `${fileName}.${knownExt}`;
+  }
   const blob = new Blob([fileBytes as BlobPart], {
-    type: MIME_BY_EXT[ext] ?? "application/octet-stream",
+    type: mime ?? "application/octet-stream",
   });
   const form = new FormData();
   form.set("filename", fileName);

@@ -19,6 +19,7 @@ received documents (expenses...), plus config lookups. See `docs/api.md` for the
 
 - `src/server.ts` — `buildServer()`: one `registerTool` per action, plus the shared zod schemas for pagination/sort/filter params. A factory, not a singleton, because the HTTP entrypoint builds one instance per request.
 - `src/index.ts` — stdio entrypoint (the `bin`): builds a server and connects `StdioServerTransport`.
+- `src/attachment.ts` — the three `upload_attachment` sources: `downloadFile` (https only, same-host redirects, size cap, timeout), `decodeBase64`, `readServerFile` (whose error states the path is resolved on the server, not the client).
 - `src/http.ts` — Streamable HTTP entrypoint: stateless, one server + transport per request, credentials taken from the request headers.
 - `src/fic.ts` — thin API client: `ficGet(path, params)` (Bearer auth, error mapping), `resolveCompanyId`, `trimListResponse` (strips `*_url` pagination noise before returning lists to the model), and the `credentials` `AsyncLocalStorage` holding the current request's token/company.
 

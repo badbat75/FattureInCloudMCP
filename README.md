@@ -21,7 +21,7 @@ Two transports over the same tools: **stdio** as a local child process, and **St
 | `create_received_document` | Create an expense or other received document |
 | `update_received_document` | Update a received document (partial) |
 | `delete_received_document` | Delete a received document (irreversible) |
-| `upload_attachment` | Upload a local file, returns an `attachment_token` to bind via create/update |
+| `upload_attachment` | Upload a file from an https `url` (preferred remotely), `content_base64`, or a server-side `file_path`; returns an `attachment_token` to bind via create/update |
 | `delete_document_attachment` | Remove a document's attachment (FIC API currently 500s here, see docs) |
 
 See [`docs/api.md`](docs/api.md) for parameters, payload shapes and API quirks. List tools support:

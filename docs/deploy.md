@@ -118,8 +118,16 @@ Or in `.mcp.json`, which expands `${VAR}` from the client environment:
 Add the gateway's own `Authorization` header alongside these when the reverse proxy
 requires one.
 
-## Known limitation
+## Attachments from remote clients
 
-`upload_attachment` reads a file from the filesystem **where the server runs**. Over
-HTTP that is the remote host, so attaching a file that lives on the client machine
-does not work — keep using the stdio entrypoint locally for that.
+`upload_attachment`'s `file_path` is read from the filesystem **where the server
+runs**. Over HTTP that is the remote host, so a path from the client machine does not
+exist there (the hardened unit's `ProtectHome=true` even turns `/home/...` into
+`EACCES`, which looks like a permission problem but is not). Remote clients pass the
+file as `url` instead, an https link the server downloads, or as `content_base64` for
+small files; see `docs/api.md`.
+
+The `url` download originates from the server host, so that host must reach the
+URL. When the link points to a public name served by the same machine (or the same
+LAN), check that the router does hairpin NAT, e.g. from the server:
+`curl -sS -o /dev/null -w '%{http_code}\n' https://<public-host>/<path>`.

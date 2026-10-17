@@ -102,9 +102,17 @@ Same shape with the received-document fields: `type` (default `expense`), `descr
 
 Flow (verified live on expenses):
 
-1. `upload_attachment` — `company_id?`, `target` (`issued` | `received`), `file_path` (absolute path **on the machine running the server**, not on the client: over HTTP that is the remote host's disk; PDF, images, XML, p7m, zip...), `filename?`. Sends `multipart/form-data` and returns `{ attachment_token }`. Unbound tokens expire, so upload right before the next step.
+1. `upload_attachment`: `company_id?`, `target` (`issued` | `received`), **exactly one** of `url`, `content_base64`, `file_path` (zero or several is an error), and `filename?`. Sends `multipart/form-data` and returns `{ attachment_token }`. Unbound tokens expire, so upload right before the next step. PDF, images, XML, p7m, zip...; hard limit 20 MB for every source.
 2. Pass the token as `data.attachment_token` in `create_*` or `update_*` — passing a new token on update replaces the current attachment.
 3. The document detail then exposes `attachment_url`.
+
+Which source to use:
+
+| Source | When | Notes |
+| --- | --- | --- |
+| `url` | **Default from a remote client** (HTTP transport) | The server downloads the file itself. `https` only, public addresses only (loopback, RFC 1918, link-local, CGNAT and ULA targets are refused, checked on the resolved address of every hop to defeat DNS rebinding), 30 s timeout, 20 MB cap; non-2xx responses are rejected; redirects are followed only within the same host. Name from `filename`, else `Content-Disposition`, else the last URL segment; MIME from the extension, else the response `Content-Type` (which also supplies a missing extension). Typical input: the link `outlook_get_attachment` returns. |
+| `content_base64` | Small files only, when no URL exists | `filename` (with extension) is required. A `data:...;base64,` prefix is accepted. Keep it under ~100 KB decoded: base64 inflates the payload by a third (a 35 KB PDF becomes ~47 KB of tool-call text the model has to emit verbatim), which is costly and error-prone. |
+| `file_path` | Local stdio use only | Resolved on the filesystem **of the machine running the MCP server**, not the client's. Over HTTP that is the remote host, where a client path does not exist (and with `ProtectHome=true` a `/home/...` path fails with `EACCES` rather than `ENOENT`); the error message says so explicitly. |
 
 `delete_document_attachment` (`company_id?`, `target`, `document_id`) maps to the spec's DELETE endpoint, **but the live API consistently returned 500 on it during testing (2026-07-30)** — as alternatives, replace the attachment via update or delete the whole document.
 

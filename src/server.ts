@@ -1,7 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import {
+  type AttachmentFile,
+  MAX_ATTACHMENT_BYTES,
+  RECOMMENDED_BASE64_BYTES,
+  decodeBase64,
+  downloadFile,
+  readServerFile,
+} from "./attachment.js";
 import { ficGet, ficRequest, ficUploadAttachment, resolveCompanyId, trimListResponse } from "./fic.js";
 
 const INSTRUCTIONS = `Bridge to the Fatture in Cloud API v2 (Italian invoicing platform). Read and write (CRUD) on issued documents (invoices, credit notes...) and received documents (expenses...), plus config lookups and the e-invoice (SDI) XML download via get_e_invoice_xml.
@@ -22,7 +28,8 @@ Writing documents:
 - For expenses, provide amount_net/amount_vat/amount_gross explicitly; category should match an existing one (get_company_info received_document_categories).
 - payments_list covering the total is REQUIRED when creating any document, expenses included (the API rejects a mismatch between payments and total).
 - update tools send only the fields you pass (plus the API-required type); delete tools are irreversible.
-- Attachments: upload_attachment reads a LOCAL file and returns an attachment_token; pass it as data.attachment_token in create/update to bind it to a document. The attachment URL then appears in the document detail (attachment_url).`;
+- Attachments: upload_attachment returns an attachment_token; pass it as data.attachment_token in create/update to bind it to a document. The attachment URL then appears in the document detail (attachment_url).
+  Give it exactly one source: url (preferred: an https link the server downloads, e.g. the one outlook_get_attachment returns), content_base64 (small files only, filename required), or file_path. file_path is read on the MCP server's own filesystem, NOT the client's: when this server is remote, a path from your machine does not exist here, so use url or content_base64.`;
 
 const companyIdSchema = z
   .number()
@@ -499,23 +506,69 @@ export function buildServer(): McpServer {
     {
       title: "Upload document attachment",
       description:
-        "Upload a local file (PDF, image, XML, zip...) as an attachment for an issued or received document. " +
+        "Upload a file (PDF, image, XML, zip...) as an attachment for an issued or received document. " +
+        "Pass exactly one source: url (preferred from a remote client: an https link the server downloads), " +
+        "content_base64 (small files only, needs filename), or file_path (a path on the MCP SERVER's filesystem, " +
+        "only useful when the server runs locally over stdio). " +
         "Returns an attachment_token: pass it as data.attachment_token in a create/update tool to bind it to a document. " +
         "Unbound tokens expire after a while, so upload right before creating/updating.",
       inputSchema: {
         company_id: companyIdSchema,
         target: attachmentTargetSchema,
-        file_path: z.string().describe("Absolute path of the local file to upload."),
-        filename: z.string().optional().describe("Display name for the attachment (defaults to the file's basename)."),
+        url: z
+          .string()
+          .optional()
+          .describe(
+            "https URL the server downloads the file from (preferred source). Redirects are followed only within " +
+              `the same host; non-2xx responses are rejected; max ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB, 30 s timeout. ` +
+              "The filename defaults to the response's Content-Disposition, else the last URL segment."
+          ),
+        content_base64: z
+          .string()
+          .optional()
+          .describe(
+            "File content as base64 (a data: URL prefix is accepted). Requires filename. Meant for small files: " +
+              `keep it under ~${RECOMMENDED_BASE64_BYTES / 1024} KB decoded, since every byte costs ~1.33 characters ` +
+              "of tool-call text. Prefer url whenever the file is reachable over https."
+          ),
+        file_path: z
+          .string()
+          .optional()
+          .describe(
+            "Absolute path on the filesystem of the machine running this MCP server, NOT the client's. Only works " +
+              "when the server runs locally (stdio); from a remote client use url or content_base64."
+          ),
+        filename: z
+          .string()
+          .optional()
+          .describe(
+            "Display name for the attachment, with extension. Required with content_base64; otherwise defaults " +
+              "to the file's basename (file_path) or the download's name (url)."
+          ),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ company_id, target, file_path, filename }) => {
+    async ({ company_id, target, url, content_base64, file_path, filename }) => {
+      const given = [url, content_base64, file_path].filter((source) => source !== undefined && source !== "");
+      if (given.length !== 1) {
+        throw new Error(
+          `upload_attachment needs exactly one of url, content_base64, file_path (got ${given.length}). ` +
+            "From a remote client use url (preferred) or content_base64."
+        );
+      }
+      if (content_base64 && !filename) {
+        throw new Error("filename (with extension) is required when uploading content_base64.");
+      }
+
       const cid = resolveCompanyId(company_id);
-      const bytes = await readFile(file_path);
-      const name = filename ?? basename(file_path);
+      const file: AttachmentFile = url
+        ? await downloadFile(url)
+        : content_base64
+          ? decodeBase64(content_base64)
+          : await readServerFile(file_path!);
+      const name = filename ?? file.filename ?? "attachment";
       const resource = target === "issued" ? "issued_documents" : "received_documents";
-      const body = await ficUploadAttachment(resource, cid, bytes, name);
+      const body = await ficUploadAttachment(resource, cid, file.bytes, name, file.contentType);
       return jsonResult(body?.data ?? body);
     }
   );

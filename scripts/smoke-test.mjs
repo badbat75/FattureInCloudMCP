@@ -114,6 +114,27 @@ if (firstExpense) {
   );
 }
 
+const pendingText = report(
+  "list_pending_received_documents",
+  await request("tools/call", {
+    name: "list_pending_received_documents",
+    arguments: { per_page: 5, fieldset: "detailed" },
+  })
+);
+
+const firstPending = JSON.parse(pendingText || "{}").data?.[0];
+if (firstPending) {
+  report(
+    "get_pending_received_document",
+    await request("tools/call", {
+      name: "get_pending_received_document",
+      arguments: { document_id: firstPending.id },
+    })
+  );
+} else {
+  console.log("skip get_pending_received_document: the queue is empty");
+}
+
 child.kill();
 console.log(failures ? `${failures} failure(s)` : "all checks passed");
 process.exit(failures ? 1 : 0);

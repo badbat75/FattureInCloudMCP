@@ -15,6 +15,8 @@ Two transports over the same tools: **stdio** as a local child process, and **St
 | `get_issued_document` | Full detail of a single issued document |
 | `list_received_documents` | Paginated list of received documents (default `expense`) |
 | `get_received_document` | Full detail of a single received document |
+| `list_pending_received_documents` | The "documenti da registrare" queue: SDI e-invoices (and emailed/uploaded documents) waiting to be registered |
+| `get_pending_received_document` | Full detail of a single pending document |
 | `create_issued_document` | Create an invoice, credit note, quote... |
 | `update_issued_document` | Update an issued document (partial: only the fields passed) |
 | `delete_issued_document` | Delete an issued document (irreversible) |

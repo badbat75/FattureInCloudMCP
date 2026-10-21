@@ -22,6 +22,8 @@ Always write comparison operators as literal characters — HTML entities (&gt;,
 Dates are ISO strings (YYYY-MM-DD); amounts are in the document currency (EUR unless specified).
 Lists are paginated: check current_page/last_page/total and fetch further pages if needed.
 
+Incoming e-invoices from SDI land in the "documenti da registrare" queue, NOT in list_received_documents: read the queue with list_pending_received_documents / get_pending_received_document, then register an item with create_received_document passing pending_id plus the data copied from the pending record (type = document_type, entity {name: supplier_name}, invoice_number = ei_number, date = emission_date, amounts, category, payments_list). Once registered it appears in list_received_documents and leaves the queue.
+
 Writing documents:
 - Before creating an invoice, look up VAT type IDs, payment methods and payment accounts with get_company_info.
 - For issued documents, provide items_list and FIC computes the totals; payments_list must cover the total.
@@ -84,6 +86,15 @@ const issuedTypeSchema = z
 const receivedTypeSchema = z
   .enum(["expense", "passive_credit_note", "passive_delivery_note", "self_invoice"])
   .describe("The received document type.");
+
+const pendingTypeSchema = z
+  .enum(["agyo", "mail", "browser"])
+  .default("agyo")
+  .describe(
+    'Channel the pending document arrived through: "agyo" for e-invoices received from SDI (default), ' +
+      '"mail" for documents emailed to the company inbox, "browser" for manual uploads. ' +
+      "Note: the live API currently returns the same list whatever the type."
+  );
 
 const entitySchema = z
   .object({
@@ -368,6 +379,63 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     }
   );
 
+  server.registerTool(
+    "list_pending_received_documents",
+    {
+      title: "List pending received documents (SDI inbox)",
+      description:
+        "List the received documents waiting to be registered: the e-invoices delivered by SDI (type agyo), " +
+        "plus documents that arrived by email or manual upload. This is the Fatture in Cloud 'documenti da " +
+        "registrare' queue. Each row carries the parsed invoice data (supplier_name, ei_number, emission_date, " +
+        "amounts, payments_list, suggested category and document_type) and the attachment_url of the original " +
+        "XML. Register one with create_received_document passing its id as pending_id.",
+      inputSchema: {
+        company_id: companyIdSchema,
+        type: pendingTypeSchema,
+        page: pageSchema,
+        per_page: perPageSchema,
+        sort: sortSchema,
+        q: qSchema,
+        fieldset: fieldsetSchema,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ company_id, type, page, per_page, sort, q, fieldset }) => {
+      const cid = resolveCompanyId(company_id);
+      const body = await ficGet(`/c/${cid}/received_documents/pending`, {
+        type,
+        page,
+        per_page,
+        sort,
+        q,
+        fieldset,
+      });
+      return jsonResult(trimListResponse(body));
+    }
+  );
+
+  server.registerTool(
+    "get_pending_received_document",
+    {
+      title: "Get pending received document (SDI inbox)",
+      description:
+        "Get a single document from the 'documenti da registrare' queue by ID, with the data parsed from the " +
+        "e-invoice (supplier_name, ei_number, emission_date, amount_net/amount_vat/amount_gross, payments_list, " +
+        "category, document_type) and the attachment_url of the original XML.",
+      inputSchema: {
+        company_id: companyIdSchema,
+        document_id: documentIdSchema,
+        fieldset: z.enum(["basic", "detailed"]).default("detailed").describe("Level of detail (default: detailed)."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ company_id, document_id, fieldset }) => {
+      const cid = resolveCompanyId(company_id);
+      const body = await ficGet(`/c/${cid}/received_documents/pending/${document_id}`, { fieldset });
+      return jsonResult(body?.data ?? body);
+    }
+  );
+
   // ---------------------------------------------------------------------------
   // Write tools — issued documents
   // ---------------------------------------------------------------------------
@@ -443,16 +511,30 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
       title: "Create received document (expense)",
       description:
         "Create a received document (expense, passive credit note...). Requires description, entity, date, amounts " +
-        "(amount_net/amount_vat/amount_gross) and a payments_list covering the total. Returns the created document.",
+        "(amount_net/amount_vat/amount_gross) and a payments_list covering the total. Returns the created document. " +
+        "To register a document from the 'documenti da registrare' queue (see list_pending_received_documents), " +
+        "pass its id as pending_id together with data built from the pending record: type = document_type, " +
+        "entity {name: supplier_name}, invoice_number = ei_number, date = emission_date, the three amounts, " +
+        "category and payments_list. The e-invoice XML stays attached and the item leaves the queue.",
       inputSchema: {
         company_id: companyIdSchema,
+        pending_id: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "ID of a pending received document (from list_pending_received_documents) to register as this document."
+          ),
         data: receivedDataSchema,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ company_id, data }) => {
+    async ({ company_id, pending_id, data }) => {
       const cid = resolveCompanyId(company_id);
-      const body = await ficRequest("POST", `/c/${cid}/received_documents`, { body: { data } });
+      const body = await ficRequest("POST", `/c/${cid}/received_documents`, {
+        body: pending_id === undefined ? { data } : { pending_id, data },
+      });
       return jsonResult(body?.data ?? body);
     }
   );

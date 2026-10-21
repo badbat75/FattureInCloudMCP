@@ -14,6 +14,8 @@ MCP tools exposed by this server and the [Fatture in Cloud API v2](https://devel
 | `get_issued_document` | `GET /c/{company_id}/issued_documents/{document_id}` | same as above |
 | `list_received_documents` | `GET /c/{company_id}/received_documents` | `received_documents:r` |
 | `get_received_document` | `GET /c/{company_id}/received_documents/{document_id}` | `received_documents:r` |
+| `list_pending_received_documents` | `GET /c/{company_id}/received_documents/pending` | `received_documents:r` |
+| `get_pending_received_document` | `GET /c/{company_id}/received_documents/pending/{document_id}` | `received_documents:r` |
 | `get_e_invoice_xml` | `GET /c/{company_id}/issued_documents/{document_id}/e_invoice/xml` | `issued_documents.<type>:r` |
 
 ### Write tools
@@ -69,6 +71,18 @@ Same parameters as `list_issued_documents`, but `type` is one of `expense` (defa
 
 `company_id?`, `document_id` (required), `fieldset` (default `detailed`). Returns the full document including `category`, `tax_deductibility`, `vat_deductibility`, `currency`, `payments_list`.
 
+### `list_pending_received_documents`
+
+The "documenti da registrare" queue: e-invoices delivered by SDI plus documents that arrived by email or manual upload, waiting to be turned into received documents. They are **not** visible through `list_received_documents` until registered.
+
+Same pagination/sort/filter parameters as the other list tools; `type` is the arrival channel and is required by the API: `agyo` (SDI, default), `mail`, `browser`. Verified live (2026-10-21): the API returns the same list for all three values.
+
+Each row (`fieldset: detailed`) carries the data parsed from the e-invoice: `subject`, `filename`, `supplier_name`, `ei_number` (the supplier's invoice number), `emission_date`, `amount_net`/`amount_vat`/`amount_gross`, `currency`, `payments_list`, the suggested `category` and `document_type` (`expense`, `self_invoice`...), `other_attachments` and the `attachment_url` of the original XML. `date` is the arrival timestamp, not the invoice date.
+
+### `get_pending_received_document`
+
+`company_id?`, `document_id` (required), `fieldset` (default `detailed`). Same shape as a list row.
+
 ### `get_e_invoice_xml`
 
 `company_id?`, `document_id` (required), `include_attachment?` (bool, embeds the document attachment in the XML). Returns the raw e-invoice (SDI) XML as text. Only works on documents that have an e-invoice in Fatture in Cloud (e.g. self invoices, or any document generated with `e_invoice`); for regular invoices the XML is only produced once the e-invoice is sent to SDI. Note: the public document URLs embed a JWT that only allows the PDF format — this endpoint is the API way to get the XML.
@@ -93,6 +107,8 @@ Update sends a `PUT` with only the provided fields. Both return the resulting do
 Same shape with the received-document fields: `type` (default `expense`), `description`, `entity` (supplier), `date`, `category`, `invoice_number`, `amount_net`/`amount_vat`/`amount_gross`, `tax_deductibility`/`vat_deductibility`, `payments_list`.
 
 **Quirk (verified live): `payments_list` covering `amount_gross` is required on create even for plain expenses** — otherwise the API returns 422 "Il totale dei pagamenti non corrisponde al totale da pagare".
+
+**Registering a pending document.** `create_received_document` also accepts `pending_id`: the ID of an item from `list_pending_received_documents`. The request becomes `POST /received_documents` with body `{ pending_id, data }` (the `CreateReceivedDocumentRequest` model of the spec). `data` is built from the pending record: `type` = `document_type`, `entity: { name: supplier_name }`, `invoice_number` = `ei_number`, `date` = `emission_date`, the three amounts, `category`, `payments_list`. Verified live (2026-10-21): the original XML stays attached to the created document as `primary_attachment`, `attachment_url` is populated, and the item leaves the queue; the result is the same as the "Registra" button in the web console. For an SDI self invoice (TD17/TD19) mirror what the console produces: `e_invoice: true`, `tax_deductibility: 0`, `vat_deductibility: 100`, `payments_list` with `status: "reversed"`, and the `Causale` of the XML as `description`.
 
 ### `delete_issued_document` / `delete_received_document`
 

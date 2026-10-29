@@ -80,7 +80,7 @@ Add to `claude_desktop_config.json`:
 
 ### Remote (Streamable HTTP)
 
-`dist/http.js` serves the same tools over HTTP and takes the credentials from the `X-FIC-Token` and `X-FIC-Company` request headers instead of the environment, so the host running it stores no secret. `./scripts/deploy.ps1` installs it as a systemd service on a remote machine — see [docs/deploy.md](docs/deploy.md).
+`dist/http.js` serves the same tools over HTTP and takes the credentials from the `X-FIC-Token` and `X-FIC-Company` request headers instead of the environment, so the host running it stores no secret. `./scripts/deploy.ps1` (or `./scripts/deploy.sh`) installs it as a systemd service on a remote machine — see [docs/deploy.md](docs/deploy.md).
 
 ## Extending
 

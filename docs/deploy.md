@@ -25,6 +25,15 @@ servers necessarily keep their credentials on the host.
 ./scripts/deploy.ps1 -RemoteHost user@host -RemotePath /srv/fic-mcp -Port 3011
 ```
 
+Without PowerShell, `scripts/deploy.sh` does the same steps with the same defaults:
+
+```bash
+./scripts/deploy.sh user@host
+./scripts/deploy.sh --remote-path /srv/fic-mcp --port 3011 user@host
+```
+
+Its options mirror the parameters below: `--remote-path`, `--service-user`, `--service-name`, `--port`, `--bind`, `--skip-build`.
+
 | Parameter | Default |
 | --- | --- |
 | `-RemoteHost` | required, `user@host` |

@@ -13,7 +13,7 @@ received documents (expenses...), plus the client/supplier registry and config l
 - `npm run smoke` — read-only end-to-end test against the real API (needs `dist/` built and credentials, see below); safe to run anytime
 - `node scripts/crud-test.mjs` — full CRUD roundtrip on the REAL account (creates, updates and deletes a test expense; leaves no trace but run deliberately)
 - `npm run start:http` — run the Streamable HTTP entrypoint locally (`HOST`/`PORT`, defaults `127.0.0.1:3010`)
-- `./scripts/deploy.ps1` — build and install the HTTP entrypoint as a systemd service on a remote host, see `docs/deploy.md`
+- `./scripts/deploy.ps1` (or `./scripts/deploy.sh user@host` without PowerShell) — build and install the HTTP entrypoint as a systemd service on a remote host, see `docs/deploy.md`
 
 ## Architecture
 

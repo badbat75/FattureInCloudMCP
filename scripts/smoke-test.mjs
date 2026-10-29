@@ -135,6 +135,22 @@ if (firstPending) {
   console.log("skip get_pending_received_document: the queue is empty");
 }
 
+for (const kind of ["client", "supplier"]) {
+  const entitiesText = report(
+    `list_entities ${kind}`,
+    await request("tools/call", { name: "list_entities", arguments: { kind, per_page: 5 } })
+  );
+  const firstEntity = JSON.parse(entitiesText || "{}").data?.[0];
+  if (firstEntity) {
+    report(
+      `get_entity ${kind}`,
+      await request("tools/call", { name: "get_entity", arguments: { kind, entity_id: firstEntity.id } })
+    );
+  } else {
+    console.log(`skip get_entity ${kind}: no ${kind} in the sample`);
+  }
+}
+
 child.kill();
 console.log(failures ? `${failures} failure(s)` : "all checks passed");
 process.exit(failures ? 1 : 0);

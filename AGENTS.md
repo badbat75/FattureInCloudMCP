@@ -3,7 +3,7 @@
 MCP server (stdio and Streamable HTTP transports, official TypeScript SDK) bridging the
 [Fatture in Cloud API v2](https://developers.fattureincloud.it/api-reference/).
 Exposes CRUD on issued documents (invoices, credit notes, self invoices...) and
-received documents (expenses...), plus config lookups. See `docs/api.md` for the implemented surface.
+received documents (expenses...), plus the client/supplier registry and config lookups. See `docs/api.md` for the implemented surface.
 
 ## Commands
 

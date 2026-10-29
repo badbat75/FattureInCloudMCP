@@ -10,62 +10,37 @@ import {
 } from "./attachment.js";
 import { ficGet, ficRequest, ficUploadAttachment, resolveCompanyId, trimListResponse } from "./fic.js";
 
-const INSTRUCTIONS = `Bridge to the Fatture in Cloud API v2 (Italian invoicing platform). Read and write (CRUD) on issued documents (invoices, credit notes...) and received documents (expenses...), plus config lookups and the e-invoice (SDI) XML download via get_e_invoice_xml.
+const INSTRUCTIONS = `Fatture in Cloud API v2 (Italian invoicing): issued documents (invoices, credit notes...), received documents (expenses...), the SDI inbox, clients/suppliers, attachments, config lookups.
 
-If a default company is configured (FIC_COMPANY_ID env var under stdio, X-FIC-Company header over HTTP), tools use it automatically; otherwise call list_companies first to discover the company_id.
-List tools accept the Fatture in Cloud filter language in the "q" parameter. Examples:
-  q: "date >= '2026-01-01' and date <= '2026-06-30'"
-  q: "entity.name like '%acme%'"
-  q: "amount_gross > 1000"
-Supported operators: =, !=, >, <, >=, <=, like, is null, is not null, combined with and/or and parentheses.
-Always write comparison operators as literal characters — HTML entities (&gt;, &lt;) are passed through unchanged and rejected with 422 "Invalid query syntax".
-Dates are ISO strings (YYYY-MM-DD); amounts are in the document currency (EUR unless specified).
-Lists are paginated: check current_page/last_page/total and fetch further pages if needed.
-
-Incoming e-invoices from SDI land in the "documenti da registrare" queue, NOT in list_received_documents: read the queue with list_pending_received_documents / get_pending_received_document, then register an item with create_received_document passing pending_id plus the data copied from the pending record (type = document_type, entity {name: supplier_name}, invoice_number = ei_number, date = emission_date, amounts, category, payments_list). Once registered it appears in list_received_documents and leaves the queue.
-
-Writing documents:
-- Before creating an invoice, look up VAT type IDs, payment methods and payment accounts with get_company_info.
-- For issued documents, provide items_list and FIC computes the totals; payments_list must cover the total.
-- For expenses, provide amount_net/amount_vat/amount_gross explicitly; category should match an existing one (get_company_info received_document_categories).
-- payments_list covering the total is REQUIRED when creating any document, expenses included (the API rejects a mismatch between payments and total).
-- update tools send only the fields you pass (plus the API-required type); delete tools are irreversible.
-- Attachments: upload_attachment returns an attachment_token; pass it as data.attachment_token in create/update to bind it to a document. The attachment URL then appears in the document detail (attachment_url).
-  Give it exactly one source: url (preferred: an https link the server downloads, e.g. the one outlook_get_attachment returns), content_base64 (small files only, filename required), or file_path. file_path is read on the MCP server's own filesystem, NOT the client's: when this server is remote, a path from your machine does not exist here, so use url or content_base64.`;
+- company_id: omit it to use the session default; without one, get it from list_companies.
+- Lists are paginated (current_page/last_page/total) and take one document type per call. Keep fieldset "basic" unless you need line items.
+- q filter: field op value, operators = != > < >= <= like (% wildcard) "is null" "is not null", joined by and/or and parentheses; dates 'YYYY-MM-DD'. Example: date >= '2026-01-01' and entity.name like '%acme%'.
+- Amounts are in the document currency (EUR unless stated).
+- Creating any document, expenses included, requires a payments_list summing to the total. Issued documents: send items_list (FIC computes totals) with VAT, payment method and account IDs from get_company_info. Expenses: send amount_net/amount_vat/amount_gross and a category from get_company_info.
+- update_* tools change only the fields you pass; delete_* tools are irreversible.
+- Every document stores its own copy of the client/supplier data: update_entity changes the registry (future documents), data.entity in update_*_document changes that one document.
+- E-invoices received from SDI wait in list_pending_received_documents, not in list_received_documents, until registered with create_received_document + pending_id.
+- Attachments: upload_attachment returns an attachment_token; set it as data.attachment_token in a create/update.`;
 
 const companyIdSchema = z
   .number()
   .int()
   .positive()
   .optional()
-  .describe(
-    "Fatture in Cloud company ID. Omit to use the default company configured for the session; discover IDs with list_companies."
-  );
+  .describe("Omit to use the session default.");
 
-const pageSchema = z.number().int().min(1).default(1).describe("Page number to retrieve (1-based).");
-const perPageSchema = z
-  .number()
-  .int()
-  .min(5)
-  .max(100)
-  .default(50)
-  .describe("Results per page (min 5, max 100 — the API rejects smaller values).");
-const sortSchema = z
-  .string()
-  .optional()
-  .describe('Comma-separated sort fields, prefix with "-" for descending. E.g. "-date" or "-date,number".');
+const pageSchema = z.number().int().min(1).default(1).describe("1-based.");
+const perPageSchema = z.number().int().min(5).max(100).default(50).describe("5-100 (the API rejects < 5).");
+const sortSchema = z.string().optional().describe('Comma-separated fields, "-" prefix for descending, e.g. "-date".');
 const qSchema = z
   .string()
   .optional()
-  .describe(
-    "Filter query, e.g. \"date >= '2026-01-01' and date <= '2026-06-30'\" or \"entity.name like '%acme%'\". " +
-      "Write the operators literally (>, <, >=, <=): the string is sent verbatim, so HTML entities " +
-      "like &gt; or &lt; reach the API and are rejected with 422 \"Invalid query syntax\"."
-  );
+  .describe("Filter, e.g. \"date >= '2026-01-01'\". Write operators literally: HTML entities (&gt;) are rejected with 422.");
 const fieldsetSchema = z
   .enum(["basic", "detailed"])
   .default("basic")
-  .describe('"basic" for compact rows (default), "detailed" for full documents including line items.');
+  .describe('"detailed" adds line items and full data.');
+const detailFieldsetSchema = z.enum(["basic", "detailed"]).default("detailed");
 
 const issuedTypeSchema = z
   .enum([
@@ -80,106 +55,115 @@ const issuedTypeSchema = z
     "supplier_order",
     "self_own_invoice",
     "self_supplier_invoice",
-  ])
-  .describe("The issued document type.");
+  ]);
 
-const receivedTypeSchema = z
-  .enum(["expense", "passive_credit_note", "passive_delivery_note", "self_invoice"])
-  .describe("The received document type.");
+const receivedTypeSchema = z.enum(["expense", "passive_credit_note", "passive_delivery_note", "self_invoice"]);
 
 const pendingTypeSchema = z
   .enum(["agyo", "mail", "browser"])
   .default("agyo")
-  .describe(
-    'Channel the pending document arrived through: "agyo" for e-invoices received from SDI (default), ' +
-      '"mail" for documents emailed to the company inbox, "browser" for manual uploads. ' +
-      "Note: the live API currently returns the same list whatever the type."
-  );
+  .describe("Arrival channel (agyo = SDI). Required by the API, but every value currently returns the same list.");
 
 const entitySchema = z
   .object({
-    id: z.number().int().optional().describe("ID of an existing client/supplier (preferred when known)."),
-    name: z.string().optional().describe("Entity name; used to match or create if no id is given."),
+    id: z.number().int().optional().describe("Existing client/supplier ID (preferred)."),
+    name: z.string().optional(),
     vat_number: z.string().optional(),
     tax_code: z.string().optional(),
   })
   .passthrough()
-  .describe(
-    "The counterpart: client for issued documents, supplier for received ones. Pass {id} for an existing entity or at least {name}."
-  );
+  .describe("Client (issued) or supplier (received): {id}, or at least {name}.");
+
+const idRefSchema = z.object({ id: z.number().int() }).passthrough();
 
 const paymentSchema = z
   .object({
-    amount: z.number().describe("Payment amount."),
-    due_date: z.string().describe("Due date, YYYY-MM-DD."),
+    amount: z.number(),
+    due_date: z.string().describe("YYYY-MM-DD."),
     status: z.enum(["not_paid", "paid", "reversed"]).default("not_paid"),
-    paid_date: z.string().optional().describe("YYYY-MM-DD, required when status is paid."),
-    payment_account: z
-      .object({ id: z.number().int() })
-      .passthrough()
-      .optional()
-      .describe("Payment account {id}, see get_company_info payment_accounts. Required when status is paid."),
+    paid_date: z.string().optional().describe("YYYY-MM-DD, required when paid."),
+    payment_account: idRefSchema.optional().describe("Required when paid."),
   })
   .passthrough();
 
 const issuedItemSchema = z
   .object({
-    name: z.string().describe("Line item name."),
+    name: z.string(),
     qty: z.number().default(1),
-    net_price: z.number().optional().describe("Unit net price. Provide net_price or gross_price."),
+    net_price: z.number().optional().describe("Unit price; or gross_price."),
     gross_price: z.number().optional(),
-    vat: z
-      .object({ id: z.number().int() })
-      .passthrough()
-      .optional()
-      .describe("VAT type {id}, see get_company_info vat_types."),
+    vat: idRefSchema.optional().describe("VAT type, get_company_info vat_types."),
     description: z.string().optional(),
     product_id: z.number().int().optional(),
   })
   .passthrough();
 
+const passthroughNote = "Other Fatture in Cloud fields pass through as-is.";
+const attachmentTokenSchema = z.string().optional().describe("From upload_attachment.");
+
 const issuedDataSchema = z
   .object({
     type: issuedTypeSchema.default("invoice"),
     entity: entitySchema.optional().describe("Required on create."),
-    date: z.string().optional().describe("Document date, YYYY-MM-DD (defaults to today)."),
-    number: z.number().int().optional().describe("Document number (auto-assigned if omitted)."),
-    numeration: z.string().optional().describe('Numeration/sezionale, e.g. "/A" (empty for default).'),
-    subject: z.string().optional().describe("Internal subject."),
-    visible_subject: z.string().optional().describe("Subject visible to the client."),
-    items_list: z.array(issuedItemSchema).optional().describe("Line items; FIC computes totals from them."),
-    payments_list: z.array(paymentSchema).optional().describe("Payments; must cover the document total."),
-    payment_method: z.object({ id: z.number().int() }).passthrough().optional().describe("See get_company_info payment_methods."),
-    e_invoice: z.boolean().optional().describe("Set true to mark as electronic invoice (SDI)."),
+    date: z.string().optional().describe("YYYY-MM-DD, default today."),
+    number: z.number().int().optional().describe("Auto-assigned if omitted."),
+    numeration: z.string().optional().describe('Sezionale, e.g. "/A".'),
+    subject: z.string().optional().describe("Internal."),
+    visible_subject: z.string().optional(),
+    items_list: z.array(issuedItemSchema).optional(),
+    payments_list: z.array(paymentSchema).optional().describe("Must sum to the total."),
+    payment_method: idRefSchema.optional(),
+    e_invoice: z.boolean().optional().describe("true for an SDI e-invoice."),
     notes: z.string().optional(),
-    attachment_token: z.string().optional().describe("Token from upload_attachment to bind a file to this document."),
+    attachment_token: attachmentTokenSchema,
   })
   .passthrough()
-  .describe("The document payload. Extra Fatture in Cloud fields beyond the ones listed are passed through as-is.");
+  .describe(passthroughNote);
 
 const receivedDataSchema = z
   .object({
     type: receivedTypeSchema.default("expense"),
-    description: z.string().optional().describe("Expense description. Required on create."),
-    entity: entitySchema.optional().describe("Supplier. Required on create."),
-    date: z.string().optional().describe("Document date, YYYY-MM-DD."),
-    category: z.string().optional().describe("Expense category, see get_company_info received_document_categories."),
-    invoice_number: z.string().optional().describe("The supplier's invoice number."),
+    description: z.string().optional().describe("Required on create."),
+    entity: entitySchema.optional().describe("Required on create."),
+    date: z.string().optional().describe("YYYY-MM-DD."),
+    category: z.string().optional(),
+    invoice_number: z.string().optional().describe("The supplier's number."),
     amount_net: z.number().optional(),
     amount_vat: z.number().optional(),
     amount_gross: z.number().optional(),
-    tax_deductibility: z.number().optional().describe("Percent 0-100."),
-    vat_deductibility: z.number().optional().describe("Percent 0-100."),
-    payments_list: z.array(paymentSchema).optional(),
-    attachment_token: z.string().optional().describe("Token from upload_attachment to bind a file to this document."),
+    tax_deductibility: z.number().optional().describe("Percent."),
+    vat_deductibility: z.number().optional().describe("Percent."),
+    payments_list: z.array(paymentSchema).optional().describe("Must sum to amount_gross."),
+    attachment_token: attachmentTokenSchema,
   })
   .passthrough()
-  .describe("The document payload. Extra Fatture in Cloud fields beyond the ones listed are passed through as-is.");
+  .describe(passthroughNote);
 
-const documentIdSchema = z.number().int().positive().describe("The ID of the document.");
+const entityKindSchema = z.enum(["client", "supplier"]);
+const entityPath = (cid: number, kind: "client" | "supplier") =>
+  `/c/${cid}/entities/${kind === "client" ? "clients" : "suppliers"}`;
+
+const entityDataSchema = z
+  .object({
+    name: z.string().optional(),
+    vat_number: z.string().optional(),
+    tax_code: z.string().optional(),
+    address_street: z.string().optional(),
+    address_postal_code: z.string().optional(),
+    address_city: z.string().optional(),
+    address_province: z.string().optional(),
+    country: z.string().optional().describe('Italian name, e.g. "Regno Unito".'),
+    email: z.string().optional(),
+    certified_email: z.string().optional(),
+    ei_code: z.string().optional().describe("SDI recipient code."),
+  })
+  .passthrough()
+  .describe(passthroughNote);
+
+const documentIdSchema = z.number().int().positive();
 
 function jsonResult(data: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 1) }] };
+  return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
 }
 
 /**
@@ -195,7 +179,7 @@ function jsonResult(data: unknown) {
  */
 export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean } = {}): McpServer {
   const server = new McpServer(
-    { name: "fattureincloud", version: "0.4.0" },
+    { name: "fattureincloud", version: "0.5.0" },
     { instructions: INSTRUCTIONS }
   );
 
@@ -207,9 +191,7 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "list_companies",
     {
       title: "List companies",
-      description:
-        "List the Fatture in Cloud companies accessible with the configured token. " +
-        "Returns id, name and type for each company; the id is the company_id used by the other tools.",
+      description: "List the companies the token can access: id (the company_id of the other tools), name, type.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
@@ -228,14 +210,10 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "get_company_info",
     {
       title: "Get company configuration lists",
-      description:
-        "Look up company configuration needed to build documents: VAT types (IDs for items_list), " +
-        "payment methods, payment accounts, expense categories.",
+      description: "Get a configuration list needed to build documents (VAT types, payment methods/accounts, expense categories).",
       inputSchema: {
         company_id: companyIdSchema,
-        resource: z
-          .enum(["vat_types", "payment_methods", "payment_accounts", "received_document_categories"])
-          .describe("Which configuration list to fetch."),
+        resource: z.enum(["vat_types", "payment_methods", "payment_accounts", "received_document_categories"]),
       },
       annotations: { readOnlyHint: true },
     },
@@ -250,9 +228,7 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "list_issued_documents",
     {
       title: "List issued documents",
-      description:
-        "List issued documents (invoices, credit notes, quotes, proformas, receipts...) for a company. " +
-        "One document type per call; defaults to invoices. Paginated: check current_page/last_page/total.",
+      description: "List issued documents (invoices, credit notes, quotes...) of one type.",
       inputSchema: {
         company_id: companyIdSchema,
         type: issuedTypeSchema.default("invoice"),
@@ -282,12 +258,11 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "get_issued_document",
     {
       title: "Get issued document",
-      description:
-        "Get a single issued document by ID with full details (entity, line items, payments, amounts).",
+      description: "Get an issued document: entity, line items, payments, amounts, e-invoice status.",
       inputSchema: {
         company_id: companyIdSchema,
         document_id: documentIdSchema,
-        fieldset: z.enum(["basic", "detailed"]).default("detailed").describe("Level of detail (default: detailed)."),
+        fieldset: detailFieldsetSchema,
       },
       annotations: { readOnlyHint: true },
     },
@@ -302,17 +277,11 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "get_e_invoice_xml",
     {
       title: "Download e-invoice XML (SDI)",
-      description:
-        "Download the e-invoice (fattura elettronica SDI) XML for an issued document. " +
-        "Only available when the document has an e-invoice in Fatture in Cloud (e_invoice documents, " +
-        "e.g. self invoices); returns the raw XML text as-is.",
+      description: "Get the raw SDI XML of an issued document that has e_invoice: true (drafts included).",
       inputSchema: {
         company_id: companyIdSchema,
         document_id: documentIdSchema,
-        include_attachment: z
-          .boolean()
-          .optional()
-          .describe("Include the document attachment inside the XML e-invoice."),
+        include_attachment: z.boolean().optional().describe("Embed the document attachment in the XML."),
       },
       annotations: { readOnlyHint: true },
     },
@@ -331,9 +300,7 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "list_received_documents",
     {
       title: "List received documents (expenses)",
-      description:
-        "List received documents for a company: expenses (spese), passive credit notes, passive delivery notes, self invoices. " +
-        "Defaults to expenses. Paginated: check current_page/last_page/total.",
+      description: "List registered received documents (expenses, passive credit notes...) of one type.",
       inputSchema: {
         company_id: companyIdSchema,
         type: receivedTypeSchema.default("expense"),
@@ -363,12 +330,11 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "get_received_document",
     {
       title: "Get received document (expense)",
-      description:
-        "Get a single received document (expense, passive credit note...) by ID with full details.",
+      description: "Get a received document (expense, passive credit note...).",
       inputSchema: {
         company_id: companyIdSchema,
         document_id: documentIdSchema,
-        fieldset: z.enum(["basic", "detailed"]).default("detailed").describe("Level of detail (default: detailed)."),
+        fieldset: detailFieldsetSchema,
       },
       annotations: { readOnlyHint: true },
     },
@@ -384,11 +350,9 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     {
       title: "List pending received documents (SDI inbox)",
       description:
-        "List the received documents waiting to be registered: the e-invoices delivered by SDI (type agyo), " +
-        "plus documents that arrived by email or manual upload. This is the Fatture in Cloud 'documenti da " +
-        "registrare' queue. Each row carries the parsed invoice data (supplier_name, ei_number, emission_date, " +
-        "amounts, payments_list, suggested category and document_type) and the attachment_url of the original " +
-        "XML. Register one with create_received_document passing its id as pending_id.",
+        "List the 'documenti da registrare' queue: SDI e-invoices and uploads not yet registered. Rows carry the " +
+        "parsed data (supplier_name, ei_number, emission_date, amounts, payments_list, category, document_type); " +
+        "date is the arrival time.",
       inputSchema: {
         company_id: companyIdSchema,
         type: pendingTypeSchema,
@@ -418,14 +382,11 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "get_pending_received_document",
     {
       title: "Get pending received document (SDI inbox)",
-      description:
-        "Get a single document from the 'documenti da registrare' queue by ID, with the data parsed from the " +
-        "e-invoice (supplier_name, ei_number, emission_date, amount_net/amount_vat/amount_gross, payments_list, " +
-        "category, document_type) and the attachment_url of the original XML.",
+      description: "Get one item of the 'documenti da registrare' queue, same shape as a list row.",
       inputSchema: {
         company_id: companyIdSchema,
         document_id: documentIdSchema,
-        fieldset: z.enum(["basic", "detailed"]).default("detailed").describe("Level of detail (default: detailed)."),
+        fieldset: detailFieldsetSchema,
       },
       annotations: { readOnlyHint: true },
     },
@@ -444,9 +405,7 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "create_issued_document",
     {
       title: "Create issued document",
-      description:
-        "Create an issued document (invoice, credit note, quote...). Requires entity and items_list; " +
-        "look up VAT type and payment method/account IDs with get_company_info first. Returns the created document.",
+      description: "Create an issued document from entity, items_list and payments_list. Returns it.",
       inputSchema: {
         company_id: companyIdSchema,
         data: issuedDataSchema,
@@ -464,9 +423,7 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "update_issued_document",
     {
       title: "Update issued document",
-      description:
-        "Update an existing issued document. Only the fields provided in data are changed. " +
-        "Fetch the document first with get_issued_document to see its current state.",
+      description: "Update an issued document (only the fields passed). Returns it.",
       inputSchema: {
         company_id: companyIdSchema,
         document_id: documentIdSchema,
@@ -487,7 +444,7 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "delete_issued_document",
     {
       title: "Delete issued document",
-      description: "Permanently delete an issued document by ID. Irreversible.",
+      description: "Delete an issued document. Irreversible.",
       inputSchema: {
         company_id: companyIdSchema,
         document_id: documentIdSchema,
@@ -510,22 +467,13 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     {
       title: "Create received document (expense)",
       description:
-        "Create a received document (expense, passive credit note...). Requires description, entity, date, amounts " +
-        "(amount_net/amount_vat/amount_gross) and a payments_list covering the total. Returns the created document. " +
-        "To register a document from the 'documenti da registrare' queue (see list_pending_received_documents), " +
-        "pass its id as pending_id together with data built from the pending record: type = document_type, " +
-        "entity {name: supplier_name}, invoice_number = ei_number, date = emission_date, the three amounts, " +
-        "category and payments_list. The e-invoice XML stays attached and the item leaves the queue.",
+        "Create a received document (needs description, entity, date, the three amounts, payments_list). Returns it. " +
+        "With pending_id it registers that queue item: build data from it as type = document_type, " +
+        "entity {name: supplier_name}, invoice_number = ei_number, date = emission_date, amounts, category, " +
+        "payments_list; the XML stays attached.",
       inputSchema: {
         company_id: companyIdSchema,
-        pending_id: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe(
-            "ID of a pending received document (from list_pending_received_documents) to register as this document."
-          ),
+        pending_id: z.number().int().positive().optional().describe("Item ID from list_pending_received_documents."),
         data: receivedDataSchema,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -543,9 +491,7 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "update_received_document",
     {
       title: "Update received document (expense)",
-      description:
-        "Update an existing received document. Only the fields provided in data are changed. " +
-        "Fetch the document first with get_received_document to see its current state.",
+      description: "Update a received document (only the fields passed). Returns it.",
       inputSchema: {
         company_id: companyIdSchema,
         document_id: documentIdSchema,
@@ -566,7 +512,7 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     "delete_received_document",
     {
       title: "Delete received document (expense)",
-      description: "Permanently delete a received document by ID. Irreversible.",
+      description: "Delete a received document. Irreversible.",
       inputSchema: {
         company_id: companyIdSchema,
         document_id: documentIdSchema,
@@ -581,57 +527,110 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
   );
 
   // ---------------------------------------------------------------------------
+  // Clients / suppliers (anagrafica)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "list_entities",
+    {
+      title: "List clients or suppliers",
+      description: "List clients or suppliers from the registry (anagrafica), e.g. q: \"name like '%acme%'\".",
+      inputSchema: {
+        company_id: companyIdSchema,
+        kind: entityKindSchema,
+        page: pageSchema,
+        per_page: perPageSchema,
+        sort: sortSchema,
+        q: qSchema,
+        fieldset: fieldsetSchema,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ company_id, kind, page, per_page, sort, q, fieldset }) => {
+      const cid = resolveCompanyId(company_id);
+      const body = await ficGet(entityPath(cid, kind), { page, per_page, sort, q, fieldset });
+      return jsonResult(trimListResponse(body));
+    }
+  );
+
+  server.registerTool(
+    "get_entity",
+    {
+      title: "Get client or supplier",
+      description: "Get a client or supplier from the registry. A document's entity.id is its ID.",
+      inputSchema: {
+        company_id: companyIdSchema,
+        kind: entityKindSchema,
+        entity_id: z.number().int().positive(),
+        fieldset: detailFieldsetSchema,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ company_id, kind, entity_id, fieldset }) => {
+      const cid = resolveCompanyId(company_id);
+      const body = await ficGet(`${entityPath(cid, kind)}/${entity_id}`, { fieldset });
+      return jsonResult(body?.data ?? body);
+    }
+  );
+
+  server.registerTool(
+    "update_entity",
+    {
+      title: "Update client or supplier",
+      description:
+        "Update a client or supplier in the registry (only the fields passed). Existing documents keep their own " +
+        "copy: change those with data.entity in update_*_document. Returns the entity.",
+      inputSchema: {
+        company_id: companyIdSchema,
+        kind: entityKindSchema,
+        entity_id: z.number().int().positive(),
+        data: entityDataSchema,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    async ({ company_id, kind, entity_id, data }) => {
+      const cid = resolveCompanyId(company_id);
+      const body = await ficRequest("PUT", `${entityPath(cid, kind)}/${entity_id}`, { body: { data } });
+      return jsonResult(body?.data ?? body);
+    }
+  );
+
+  // ---------------------------------------------------------------------------
   // Attachments
   // ---------------------------------------------------------------------------
 
-  const attachmentTargetSchema = z
-    .enum(["issued", "received"])
-    .describe('"issued" for issued documents (invoices...), "received" for received documents (expenses...).');
+  const attachmentTargetSchema = z.enum(["issued", "received"]).describe("Document family.");
 
   server.registerTool(
     "upload_attachment",
     {
       title: "Upload document attachment",
       description:
-        "Upload a file (PDF, image, XML, zip...) as an attachment for an issued or received document. " +
-        "Pass exactly one source: url (preferred from a remote client: an https link the server downloads), " +
-        "content_base64 (small files only, needs filename), or file_path (a path on the MCP SERVER's filesystem, " +
-        "only useful when the server runs locally over stdio). " +
-        "Returns an attachment_token: pass it as data.attachment_token in a create/update tool to bind it to a document. " +
-        "Unbound tokens expire after a while, so upload right before creating/updating.",
+        "Upload a file (PDF, image, XML, zip...) and get an attachment_token for data.attachment_token in a " +
+        "create/update; tokens expire, so upload right before. Give exactly one source: url (preferred), " +
+        "content_base64, or file_path.",
       inputSchema: {
         company_id: companyIdSchema,
         target: attachmentTargetSchema,
         url: z
           .string()
           .optional()
-          .describe(
-            "https URL the server downloads the file from (preferred source). Redirects are followed only within " +
-              `the same host; non-2xx responses are rejected; max ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB, 30 s timeout. ` +
-              "The filename defaults to the response's Content-Disposition, else the last URL segment."
-          ),
+          .describe(`https link the server downloads (same-host redirects only, max ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB).`),
         content_base64: z
           .string()
           .optional()
           .describe(
-            "File content as base64 (a data: URL prefix is accepted). Requires filename. Meant for small files: " +
-              `keep it under ~${RECOMMENDED_BASE64_BYTES / 1024} KB decoded, since every byte costs ~1.33 characters ` +
-              "of tool-call text. Prefer url whenever the file is reachable over https."
+            `Small files only (< ~${RECOMMENDED_BASE64_BYTES / 1024} KB decoded: base64 costs tool-call text). Needs filename.`
           ),
         file_path: z
           .string()
           .optional()
           .describe(
-            "Absolute path on the filesystem of the machine running this MCP server, NOT the client's. Only works " +
-              "when the server runs locally (stdio); it is disabled over HTTP, where you use url or content_base64."
+            allowFilePath
+              ? "Path on the MCP SERVER's disk, not the client's."
+              : "Disabled on this remote server: use url or content_base64."
           ),
-        filename: z
-          .string()
-          .optional()
-          .describe(
-            "Display name for the attachment, with extension. Required with content_base64; otherwise defaults " +
-              "to the file's basename (file_path) or the download's name (url)."
-          ),
+        filename: z.string().optional().describe("With extension. Defaults to the source's name."),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
@@ -671,9 +670,8 @@ export function buildServer({ allowFilePath = true }: { allowFilePath?: boolean 
     {
       title: "Delete document attachment",
       description:
-        "Remove the attachment from an issued or received document (the document itself is untouched). Irreversible. " +
-        "Note: the FIC API has been observed returning 500 on this endpoint; deleting the document or replacing " +
-        "the attachment via update (new attachment_token) are alternatives.",
+        "Remove a document's attachment (the document stays). Irreversible. FIC often answers 500 here: replacing " +
+        "the attachment via update (new attachment_token) is the workaround.",
       inputSchema: {
         company_id: companyIdSchema,
         target: attachmentTargetSchema,

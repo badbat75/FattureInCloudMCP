@@ -17,6 +17,8 @@ MCP tools exposed by this server and the [Fatture in Cloud API v2](https://devel
 | `list_pending_received_documents` | `GET /c/{company_id}/received_documents/pending` | `received_documents:r` |
 | `get_pending_received_document` | `GET /c/{company_id}/received_documents/pending/{document_id}` | `received_documents:r` |
 | `get_e_invoice_xml` | `GET /c/{company_id}/issued_documents/{document_id}/e_invoice/xml` | `issued_documents.<type>:r` |
+| `list_entities` | `GET /c/{company_id}/entities/{clients\|suppliers}` | `entity.clients:r` / `entity.suppliers:r` |
+| `get_entity` | `GET /c/{company_id}/entities/{clients\|suppliers}/{entity_id}` | `entity.clients:r` / `entity.suppliers:r` |
 
 ### Write tools
 
@@ -28,6 +30,7 @@ MCP tools exposed by this server and the [Fatture in Cloud API v2](https://devel
 | `create_received_document` | `POST /c/{company_id}/received_documents` | `received_documents:a` |
 | `update_received_document` | `PUT /c/{company_id}/received_documents/{document_id}` | `received_documents:a` |
 | `delete_received_document` | `DELETE /c/{company_id}/received_documents/{document_id}` | `received_documents:a` |
+| `update_entity` | `PUT /c/{company_id}/entities/{clients\|suppliers}/{entity_id}` | `entity.clients:a` / `entity.suppliers:a` |
 | `upload_attachment` | `POST /c/{company_id}/{issued\|received}_documents/attachment` | write scope of the target resource |
 | `delete_document_attachment` | `DELETE /c/{company_id}/{issued\|received}_documents/{document_id}/attachment` | write scope of the target resource |
 
@@ -85,7 +88,7 @@ Each row (`fieldset: detailed`) carries the data parsed from the e-invoice: `sub
 
 ### `get_e_invoice_xml`
 
-`company_id?`, `document_id` (required), `include_attachment?` (bool, embeds the document attachment in the XML). Returns the raw e-invoice (SDI) XML as text. Only works on documents that have an e-invoice in Fatture in Cloud (e.g. self invoices, or any document generated with `e_invoice`); for regular invoices the XML is only produced once the e-invoice is sent to SDI. Note: the public document URLs embed a JWT that only allows the PDF format — this endpoint is the API way to get the XML.
+`company_id?`, `document_id` (required), `include_attachment?` (bool, embeds the document attachment in the XML). Returns the raw e-invoice (SDI) XML as text. Only works on documents with `e_invoice: true`; verified live (2026-10-29) that it also works on a draft not yet sent to SDI (`ei_status: not_sent`), which makes it the way to check the XML before sending. Note: the public document URLs embed a JWT that only allows the PDF format — this endpoint is the API way to get the XML.
 
 ### `get_company_info`
 
@@ -113,6 +116,18 @@ Same shape with the received-document fields: `type` (default `expense`), `descr
 ### `delete_issued_document` / `delete_received_document`
 
 `company_id?`, `document_id`. Permanent, irreversible. Returns `{ deleted: true, document_id }`. Deleting a document also removes its attachment.
+
+### `list_entities` / `get_entity` / `update_entity`
+
+The client and supplier registry (anagrafica). Every tool takes `kind`: `client` or `supplier`.
+
+- `list_entities`: same pagination/sort/filter parameters as the document lists, no `type`. Filter by name with `q: "name like '%acme%'"`.
+- `get_entity`: `company_id?`, `kind`, `entity_id` (the `entity.id` of a document), `fieldset` (default `detailed`).
+- `update_entity`: `company_id?`, `kind`, `entity_id`, `data`. `PUT` in delta mode (the spec: "first level parameters are managed in delta mode"): only the fields passed change (verified live 2026-10-29: a `PUT` carrying only `address_postal_code` left name, street and country intact). `data` types the address and tax fields (`name`, `vat_number`, `tax_code`, `address_*`, `country`, `email`, `certified_email`, `ei_code`) and passes everything else through.
+
+**Every document keeps its own copy of the entity data.** Updating the registry affects future documents only; to fix one already created, update its `data.entity` with `update_issued_document` / `update_received_document`.
+
+**Foreign postal codes.** For a foreign client the e-invoice XML always carries `<CAP>00000</CAP>`, whatever the registry says (verified 2026-10-29 on a UK client with `address_postal_code: "NR1 1UA"`). That is the value the Agenzia delle Entrate prescribes (FAQ n. 64 of 19 July 2019), not a bug: the foreign code may go in the street address instead.
 
 ## Attachments
 
@@ -144,7 +159,7 @@ amount_gross > 1000
 
 ## Pagination
 
-List responses are trimmed to `{ current_page, last_page, per_page, total, data }` (the raw API's `*_url`/`links` fields are dropped to save context). Fetch subsequent pages by incrementing `page` until `current_page == last_page`.
+List responses are trimmed to `{ current_page, last_page, per_page, total, data }` (the raw API's `*_url`/`links` fields are dropped to save context). All JSON results are serialized without indentation, for the same reason. Fetch subsequent pages by incrementing `page` until `current_page == last_page`.
 
 ## Errors
 
@@ -157,4 +172,4 @@ API failures surface as MCP tool errors with the HTTP status, path, FIC error de
 
 ## Not yet implemented
 
-Everything else in the [OpenAPI spec](https://github.com/fattureincloud/openapi-fattureincloud): clients/suppliers CRUD, products, receipts (corrispettivi), taxes, cashbook, archive, e-invoice SDI send / rejection-reason endpoints, issued/received document totals.
+Everything else in the [OpenAPI spec](https://github.com/fattureincloud/openapi-fattureincloud): creating/deleting clients and suppliers, products, receipts (corrispettivi), taxes, cashbook, archive, e-invoice SDI send / rejection-reason endpoints, issued/received document totals.
